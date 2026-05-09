@@ -13,7 +13,7 @@ import { homedir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, basename } from 'node:path';
 import { LOG_DIR } from './findcc.js';
-import { assembleStreamMessage, createStreamAssembler, cleanupTempFiles, findRecentLog, isAnthropicApiPath, isMainAgentRequest, rotateLogFile, fingerprintMsg } from './lib/interceptor-core.js';
+import { assembleStreamMessage, createStreamAssembler, cleanupTempFiles, findRecentLog, isAnthropicApiPath, isMainAgentRequest, rotateLogFile, fingerprintMsg, stripZstdAcceptEncoding } from './lib/interceptor-core.js';
 
 
 
@@ -745,6 +745,15 @@ export function setupInterceptor() {
 
     let response;
     try {
+      // 剥掉 accept-encoding 里的 zstd —— Node <= 22 (undici 6.x) 不自动解压 zstd，
+      // 让上游选了 zstd 会导致 response 透传压缩字节，下游 JSON 解析全部 fail。
+      // gzip/br/deflate 各版本通吃，删 zstd 是最低成本的兼容修复。
+      if (_fetchOpts?.headers) {
+        const cleanedHeaders = stripZstdAcceptEncoding(_fetchOpts.headers);
+        if (cleanedHeaders !== _fetchOpts.headers) {
+          _fetchOpts = { ..._fetchOpts, headers: cleanedHeaders };
+        }
+      }
       response = await _originalFetch.call(this, _fetchUrl, _fetchOpts);
     } catch (err) {
       if (requestEntry?.isStream) resetStreamingState();

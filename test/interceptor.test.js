@@ -13,6 +13,7 @@ import {
   isPreflightEntry,
   migrateConversationContext,
   rotateLogFile,
+  stripZstdAcceptEncoding,
 } from '../lib/interceptor-core.js';
 
 // ============================================================================
@@ -859,6 +860,71 @@ describe('interceptor', () => {
 
       const result = rotateLogFile(oldFile, newFile, 500);
       assert.equal(result.rotated, true);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // stripZstdAcceptEncoding
+  // --------------------------------------------------------------------------
+  describe('stripZstdAcceptEncoding', () => {
+    it('removes zstd from a comma-separated list and keeps others', () => {
+      const out = stripZstdAcceptEncoding({ 'accept-encoding': 'gzip, br, zstd' });
+      assert.equal(out['accept-encoding'], 'gzip, br');
+    });
+
+    it('deletes the header entirely when zstd was the only value', () => {
+      const out = stripZstdAcceptEncoding({ 'accept-encoding': 'zstd' });
+      assert.equal('accept-encoding' in out, false);
+    });
+
+    it('returns the same reference when the header has no zstd (no-op fast path)', () => {
+      const input = { 'accept-encoding': 'gzip, br' };
+      assert.equal(stripZstdAcceptEncoding(input), input);
+    });
+
+    it('returns the same reference when the header is missing', () => {
+      const input = { 'content-type': 'application/json' };
+      assert.equal(stripZstdAcceptEncoding(input), input);
+    });
+
+    it('preserves the original key casing', () => {
+      const out = stripZstdAcceptEncoding({ 'Accept-encoding': 'gzip, zstd, br' });
+      assert.equal(out['Accept-encoding'], 'gzip, br');
+      assert.equal('accept-encoding' in out, false, 'must not duplicate under lowercase');
+    });
+
+    it('matches zstd case-insensitively', () => {
+      const out = stripZstdAcceptEncoding({ 'accept-encoding': 'gzip, ZSTD' });
+      assert.equal(out['accept-encoding'], 'gzip');
+    });
+
+    it('removes zstd entries with parameters', () => {
+      const out = stripZstdAcceptEncoding({ 'accept-encoding': 'gzip, zstd;q=1, br' });
+      assert.equal(out['accept-encoding'], 'gzip, br');
+    });
+
+    it('does not mutate the input object', () => {
+      const input = { 'accept-encoding': 'gzip, zstd' };
+      stripZstdAcceptEncoding(input);
+      assert.equal(input['accept-encoding'], 'gzip, zstd');
+    });
+
+    it('handles Headers instance', () => {
+      const h = new Headers({ 'accept-encoding': 'gzip, zstd, br' });
+      const out = stripZstdAcceptEncoding(h);
+      assert.notEqual(out, h, 'should return a new Headers instance');
+      assert.equal(out.get('accept-encoding'), 'gzip, br');
+    });
+
+    it('handles Headers instance with only zstd: deletes headers', () => {
+      const h = new Headers({ 'accept-encoding': 'zstd' });
+      const out = stripZstdAcceptEncoding(h);
+      assert.equal(out.get('accept-encoding'), null);
+    });
+
+    it('returns falsy input unchanged', () => {
+      assert.equal(stripZstdAcceptEncoding(null), null);
+      assert.equal(stripZstdAcceptEncoding(undefined), undefined);
     });
   });
 });
